@@ -130,6 +130,7 @@ namespace Assets.Scripts.Player
         Health m_Health;
         PlayerInputHandler m_InputHandler;
         CharacterController m_Controller;
+        Animator m_Animator;
         PlayerWeaponsManager m_WeaponsManager;
         RealisticHitboxComponent m_RealisticHitboxComponent;
         Actor m_Actor;
@@ -140,7 +141,6 @@ namespace Assets.Scripts.Player
         float m_CameraVerticalAngle = 0f;
         float m_FootstepDistanceCounter;
         float m_TargetCharacterHeight;
-
         const float k_JumpGroundingPreventionTime = 0.2f;
         const float k_GroundCheckDistanceInAir = 0.07f;
 
@@ -156,6 +156,10 @@ namespace Assets.Scripts.Player
             // fetch components on the same gameObject
             m_Controller = GetComponent<CharacterController>();
             DebugUtility.HandleErrorIfNullGetComponent<CharacterController, PlayerCharacterController>(m_Controller,
+                this, gameObject);
+
+            m_Animator = GetComponent<Animator>();
+            DebugUtility.HandleErrorIfNullGetComponent<Animator, PlayerCharacterController>(m_Controller,
                 this, gameObject);
 
             m_RealisticHitboxComponent = GetComponent<RealisticHitboxComponent>();
@@ -275,122 +279,95 @@ namespace Assets.Scripts.Player
 
         void HandleCharacterMovement()
         {
-            // horizontal character rotation
+
+            // горизонтальная ротация персонажа
             {
-                // rotate the transform with the input speed around its local Y axis
-                transform.Rotate(
-                    new Vector3(0f, m_InputHandler.GetLookInputsHorizontal() * RotationSpeed * RotationMultiplier,
-                        0f), Space.Self);
+                // поворачиваем объект с учетом входных данных
+                transform.Rotate(new Vector3(0f, m_InputHandler.GetLookInputsHorizontal() * RotationSpeed * RotationMultiplier, 0f), Space.Self);
             }
 
-            // vertical camera rotation
+            // вертикальная ротация камеры
             {
-                // add vertical inputs to the camera's vertical angle
                 m_CameraVerticalAngle += m_InputHandler.GetLookInputsVertical() * RotationSpeed * RotationMultiplier;
-
-                // limit the camera's vertical angle to min/max
                 m_CameraVerticalAngle = Mathf.Clamp(m_CameraVerticalAngle, -89f, 89f);
-
-                // apply the vertical angle as a local rotation to the camera transform along its right axis (makes it pivot up and down)
                 PlayerCamera.transform.localEulerAngles = new Vector3(m_CameraVerticalAngle, 0, 0);
             }
 
-            // character movement handling
+            // Обработка движения персонажа
             var isSprinting = m_InputHandler.GetSprintInputHeld();
+            if (isSprinting)
+                isSprinting = SetCrouchingState(false, false);
+
+            var speedModifier = isSprinting ? SprintSpeedModifier : 1f;
+
+            // Переводим входные данные для перемещения в мировое пространство
+            var worldspaceMoveInput = transform.TransformVector(m_InputHandler.GetMoveInput());
+
+            // движение на земле
+            if (IsGrounded)
             {
-                if (isSprinting)
-                    isSprinting = SetCrouchingState(false, false);
+                m_Animator.SetBool("IsWalking", true);
 
-                var speedModifier = isSprinting ? SprintSpeedModifier : 1f;
+                var targetVelocity = worldspaceMoveInput * MaxSpeedOnGround * speedModifier;
+                if (IsCrouching)
+                    targetVelocity *= MaxSpeedCrouchedRatio;
 
-                // converts move input to a worldspace vector based on our character's transform orientation
-                var worldspaceMoveInput = transform.TransformVector(m_InputHandler.GetMoveInput());
+                targetVelocity = GetDirectionReorientedOnSlope(targetVelocity.normalized, m_GroundNormal) * targetVelocity.magnitude;
 
+                // плавно интерполируем между текущей и целевой скоростью
+                CharacterVelocity = Vector3.Lerp(CharacterVelocity, targetVelocity, MovementSharpnessOnGround * Time.deltaTime);
 
-                // handle grounded movement
-                if (IsGrounded)
+                // прыжок
+                if (IsGrounded && m_InputHandler.GetJumpInputDown())
                 {
-                    // calculate the desired velocity from inputs, max speed, and current slope
-                    var targetVelocity = worldspaceMoveInput * MaxSpeedOnGround * speedModifier;
-                    // reduce speed if crouching by crouch speed ratio
-                    if (IsCrouching)
-                        targetVelocity *= MaxSpeedCrouchedRatio;
-                    targetVelocity = GetDirectionReorientedOnSlope(targetVelocity.normalized, m_GroundNormal) *
-                                     targetVelocity.magnitude;
-
-                    // smoothly interpolate between our current velocity and the target velocity based on acceleration speed
-                    CharacterVelocity = Vector3.Lerp(CharacterVelocity, targetVelocity,
-                        MovementSharpnessOnGround * Time.deltaTime);
-
-                    // jumping
-                    if (IsGrounded && m_InputHandler.GetJumpInputDown())
+                    if (SetCrouchingState(false, false))
                     {
-
-                        // force the crouch state to false
-                        if (SetCrouchingState(false, false))
-                        {
-                            // start by canceling out the vertical component of our velocity
-                            CharacterVelocity = new Vector3(CharacterVelocity.x, 0f, CharacterVelocity.z);
-
-                            // then, add the jumpSpeed value upwards
-                            CharacterVelocity += Vector3.up * JumpForce;
-
-                            // play sound
-                            AudioSource.PlayOneShot(JumpSfx);
-
-                            // remember last time we jumped because we need to prevent snapping to ground for a short time
-                            m_LastTimeJumped = Time.time;
-                            HasJumpedThisFrame = true;
-
-                            // Force grounding to false
-                            IsGrounded = false;
-                            m_GroundNormal = Vector3.up;
-                        }
+                        CharacterVelocity = new Vector3(CharacterVelocity.x, 0f, CharacterVelocity.z);
+                        CharacterVelocity += Vector3.up * JumpForce;
+                        AudioSource.PlayOneShot(JumpSfx);
+                        m_LastTimeJumped = Time.time;
+                        HasJumpedThisFrame = true;
+                        IsGrounded = false;
+                        m_GroundNormal = Vector3.up;
+                        m_Animator.SetBool("IsWalking", false);
                     }
-
-                    // footsteps sound
-                    var chosenFootstepSfxFrequency =
-                        isSprinting ? FootstepSfxFrequencyWhileSprinting : FootstepSfxFrequency;
-                    if (m_FootstepDistanceCounter >= 1f / chosenFootstepSfxFrequency)
-                    {
-                        m_FootstepDistanceCounter = 0f;
-                        AudioSource.PlayOneShot(FootstepSfx);
-                    }
-
-                    // keep track of distance traveled for footsteps sound
-                    m_FootstepDistanceCounter += CharacterVelocity.magnitude * Time.deltaTime;
                 }
-                // handle air movement
-                else
+
+                // звуки шагов
+                var chosenFootstepSfxFrequency = isSprinting ? FootstepSfxFrequencyWhileSprinting : FootstepSfxFrequency;
+                if (m_FootstepDistanceCounter >= 1f / chosenFootstepSfxFrequency)
                 {
-                    // add air acceleration
-                    CharacterVelocity += worldspaceMoveInput * AccelerationSpeedInAir * Time.deltaTime;
-
-                    // limit air speed to a maximum, but only horizontally
-                    var verticalVelocity = CharacterVelocity.y;
-                    var horizontalVelocity = Vector3.ProjectOnPlane(CharacterVelocity, Vector3.up);
-                    horizontalVelocity = Vector3.ClampMagnitude(horizontalVelocity, MaxSpeedInAir * speedModifier);
-                    CharacterVelocity = horizontalVelocity + Vector3.up * verticalVelocity;
-
-                    // apply the gravity to the velocity
-                    CharacterVelocity += Vector3.down * GravityDownForce * Time.deltaTime;
+                    m_FootstepDistanceCounter = 0f;
+                    AudioSource.PlayOneShot(FootstepSfx);
                 }
+
+                // отслеживаем пройденное расстояние для шагов
+                m_FootstepDistanceCounter += CharacterVelocity.magnitude * Time.deltaTime;
+            }
+            else // движение в воздухе
+            {
+                CharacterVelocity += worldspaceMoveInput * AccelerationSpeedInAir * Time.deltaTime;
+
+                // ограничиваем горизонтальную скорость в воздухе
+                var verticalVelocity = CharacterVelocity.y;
+                var horizontalVelocity = Vector3.ProjectOnPlane(CharacterVelocity, Vector3.up);
+                horizontalVelocity = Vector3.ClampMagnitude(horizontalVelocity, MaxSpeedInAir * speedModifier);
+                CharacterVelocity = horizontalVelocity + Vector3.up * verticalVelocity;
+
+                // добавляем гравитацию
+                CharacterVelocity += Vector3.down * GravityDownForce * Time.deltaTime;
             }
 
-            // apply the final calculated velocity value as a character movement
-            var capsuleBottomBeforeMove = GetCapsuleBottomHemisphere();
-            var capsuleTopBeforeMove = GetCapsuleTopHemisphere(m_Controller.height);
+            // применяем рассчитанную скорость
             m_Controller.Move(CharacterVelocity * Time.deltaTime);
 
-            // detect obstructions to adjust velocity accordingly
+            // проверяем на столкновения для корректировки скорости
             m_LatestImpactSpeed = Vector3.zero;
-            if (Physics.CapsuleCast(capsuleBottomBeforeMove, capsuleTopBeforeMove, m_Controller.radius,
-                CharacterVelocity.normalized, out var hit, CharacterVelocity.magnitude * Time.deltaTime, -1,
-                QueryTriggerInteraction.Ignore))
+            if (Physics.CapsuleCast(GetCapsuleBottomHemisphere(), GetCapsuleTopHemisphere(m_Controller.height), m_Controller.radius,
+                                    CharacterVelocity.normalized, out var hit, CharacterVelocity.magnitude * Time.deltaTime, -1,
+                                    QueryTriggerInteraction.Ignore))
             {
-                // We remember the last impact speed because the fall damage logic might need it
                 m_LatestImpactSpeed = CharacterVelocity;
-
                 CharacterVelocity = Vector3.ProjectOnPlane(CharacterVelocity, hit.normal);
             }
         }

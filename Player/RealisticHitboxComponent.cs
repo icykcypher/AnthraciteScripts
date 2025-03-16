@@ -116,6 +116,7 @@ namespace Assets.Scripts.Player
             }
         }
 
+       
         // Метод для нанесения урона части тела
         public void TakeDamage(BodyPartType bodyPart, float damage)
         {
