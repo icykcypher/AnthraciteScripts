@@ -131,6 +131,7 @@ namespace Assets.Scripts.Player
         PlayerInputHandler m_InputHandler;
         CharacterController m_Controller;
         PlayerWeaponsManager m_WeaponsManager;
+        RealisticHitboxComponent m_RealisticHitboxComponent;
         Actor m_Actor;
         Vector3 m_GroundNormal;
         Vector3 m_CharacterVelocity;
@@ -156,6 +157,10 @@ namespace Assets.Scripts.Player
             m_Controller = GetComponent<CharacterController>();
             DebugUtility.HandleErrorIfNullGetComponent<CharacterController, PlayerCharacterController>(m_Controller,
                 this, gameObject);
+
+            m_RealisticHitboxComponent = GetComponent<RealisticHitboxComponent>();
+            DebugUtility.HandleErrorIfNullGetComponent<RealisticHitboxComponent, PlayerCharacterController>(
+                m_RealisticHitboxComponent, this, gameObject);
 
             m_InputHandler = GetComponent<PlayerInputHandler>();
             DebugUtility.HandleErrorIfNullGetComponent<PlayerInputHandler, PlayerCharacterController>(m_InputHandler,
@@ -220,8 +225,6 @@ namespace Assets.Scripts.Player
             UpdateCharacterHeight(false);
 
             HandleCharacterMovement();
-
-            Debug.Log(IsCrouching);
         }
 
         void OnDie()
