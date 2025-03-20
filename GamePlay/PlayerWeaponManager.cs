@@ -5,6 +5,7 @@ using UnityEngine;
 using Assets.Scripts.Game;
 using Assets.Scripts.Player;
 using TMPro;
+using System;
 
 namespace Assets.Scripts.GamePlay
 {
@@ -135,11 +136,18 @@ namespace Assets.Scripts.GamePlay
 
         void Update()
         {
+            if (Input.GetButtonDown("Interaction"))
+            {
+                Debug.Log("Trying to pick up weapon");
+                TryPickupWeapon();
+            }
+
             // Получаем активное оружие
             WeaponController activeWeapon = GetActiveWeapon();
 
             if (activeWeapon == null || activeWeapon.IsReloading)
                 return;
+
 
             if (m_WeaponSwitchState == WeaponSwitchState.Up)
             {
@@ -356,20 +364,18 @@ namespace Assets.Scripts.GamePlay
             }
         }
 
-        public WeaponController HasWeapon(WeaponController weaponPrefab)
+        public WeaponController HasWeapon(WeaponController weapon)
         {
-            // Checks if we already have a weapon coming from the specified prefab
-            for (var index = 0; index < m_WeaponSlots.Length; index++)
+            foreach (var slot in m_WeaponSlots)
             {
-                var w = m_WeaponSlots[index];
-                if (w != null && w.SourcePrefab == weaponPrefab.gameObject)
+                if (slot != null && slot.WeaponName == weapon.WeaponName) // Сравнение по имени
                 {
-                    return w;
+                    return slot;
                 }
             }
-
             return null;
         }
+
 
         // Updates weapon position and camera FoV for the aiming transition
         void UpdateWeaponAiming()
@@ -515,67 +521,134 @@ namespace Assets.Scripts.GamePlay
             }
         }
 
-        // Adds a weapon to our inventory
+        void TryPickupWeapon()
+        {
+            Debug.Log("Trying to pick up weapon.");
+
+            // Получаем все коллайдеры рядом
+            Collider[] hitColliders = Physics.OverlapSphere(transform.position, 4f);
+            Debug.Log("Found " + hitColliders.Length + " colliders nearby.");
+
+            foreach (var hitCollider in hitColliders)
+            {
+                Debug.Log("Checking collider: " + hitCollider.name);
+
+                // Проверяем наличие компонента WeaponController
+                WeaponController weapon = hitCollider.GetComponent<WeaponController>();
+                if (weapon == null)
+                {
+                    Debug.Log("Collider does not have WeaponController component.");
+                    continue;
+                }
+
+                Debug.Log("Weapon found: " + weapon.WeaponName);
+
+                // Проверяем, активен ли объект
+                if (!weapon.gameObject.activeInHierarchy)
+                {
+                    Debug.LogError($"Weapon {weapon.WeaponName} is inactive, cannot be picked up!");
+                    continue;
+                }
+
+                // Подбираем оружие
+                if (AddWeapon(weapon))
+                {
+                    Debug.Log("Weapon added to inventory: " + weapon.WeaponName);
+
+                    int weaponIndex = GetWeaponIndex(weapon);
+                    Debug.Log("Weapon index: " + weaponIndex);
+
+                    if (weaponIndex != -1)
+                    {
+                        SwitchToWeaponIndex(weaponIndex);
+                    }
+
+                    Destroy(hitCollider.gameObject); // Удаляем оружие с уровня
+                    break; // Подбираем только одно оружие за раз
+                }
+                else
+                {
+                    Debug.Log("Failed to add weapon to inventory. No free slots?");
+                }
+            }
+        }
+
+        // Получаем индекс оружия в слотах
+        int GetWeaponIndex(WeaponController weapon)
+        {
+            if (weapon == null)
+            {
+                Debug.LogError("GetWeaponIndex called with null weapon.");
+                return -1;
+            }
+
+            for (int i = 0; i < m_WeaponSlots.Length; i++)
+            {
+                if (m_WeaponSlots[i] == null)
+                {
+                    Debug.Log($"Slot {i} is empty.");
+                    continue;
+                }
+
+                if (string.Equals(m_WeaponSlots[i].WeaponName, weapon.WeaponName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return i;
+                }
+            }
+
+            Debug.Log("Weapon not found in slots.");
+            return -1;
+        }
+
+        // Добавляем оружие в инвентарь
         public bool AddWeapon(WeaponController weaponPrefab)
         {
-            // if we already hold this weapon type (a weapon coming from the same source prefab), don't add the weapon
-            if (HasWeapon(weaponPrefab) != null)
+            if (weaponPrefab == null)
             {
+                Debug.LogError("Cannot add a null weapon to inventory.");
                 return false;
             }
 
-            // search our weapon slots for the first free one, assign the weapon to it, and return true if we found one. Return false otherwise
+            // Проверяем, есть ли уже такое оружие в инвентаре
+            if (HasWeapon(weaponPrefab) != null)
+            {
+                Debug.Log("Weapon already in inventory.");
+                return false;
+            }
+
+            // Ищем свободный слот
             for (int i = 0; i < m_WeaponSlots.Length; i++)
             {
-                // only add the weapon if the slot is free
                 if (m_WeaponSlots[i] == null)
                 {
-                    // spawn the weapon prefab as child of the weapon socket
+                    // Создаем экземпляр оружия
                     WeaponController weaponInstance = Instantiate(weaponPrefab, WeaponParentSocket);
                     weaponInstance.transform.localPosition = Vector3.zero;
                     weaponInstance.transform.localRotation = Quaternion.identity;
 
-                    // Set owner to this gameObject so the weapon can alter projectile/damage logic accordingly
+                    // Настраиваем оружие
                     weaponInstance.Owner = gameObject;
-                    weaponInstance.SourcePrefab = weaponPrefab.gameObject;
+                    weaponInstance.SourcePrefab = weaponPrefab.gameObject; // Присваиваем SourcePrefab правильно
                     weaponInstance.ShowWeapon(false);
 
-                    // Assign the first person layer to the weapon
-                    //int layerIndex =
-                    //    Mathf.RoundToInt(Mathf.Log(FpsWeaponLayer.value,
-                    //        2)); // This function converts a layermask to a layer index
+                    Debug.Log($"Setting SourcePrefab: {weaponInstance.SourcePrefab?.name ?? "null"}");
 
-                    int layerIndex = LayerMask.NameToLayer("FirstPersonWeapon");
-                    if (layerIndex == -1)
-                    {
-                        Debug.LogError("Layer 'FirstPersonWeapon' was not found!");
-                        return false;
-                    }
-
-                    foreach (Transform t in weaponInstance.GetComponentsInChildren<Transform>(true))
-                    {
-                        t.gameObject.layer = layerIndex;
-                    }
-
+                    // Добавляем оружие в слот
                     m_WeaponSlots[i] = weaponInstance;
 
-                    if (OnAddedWeapon != null)
-                    {
-                        OnAddedWeapon.Invoke(weaponInstance, i);
-                    }
+                    Debug.Log("Weapon added to slot " + i);
+
+                    OnAddedWeapon?.Invoke(weaponInstance, i);
 
                     return true;
                 }
             }
 
-            // Handle auto-switching to weapon if no weapons currently
-            if (GetActiveWeapon() == null)
-            {
-                SwitchWeapon(true);
-            }
-
+            Debug.Log("No free slots available.");
             return false;
         }
+
+
 
         public bool RemoveWeapon(WeaponController weaponInstance)
         {

@@ -2,8 +2,8 @@
 using UnityEngine;
 using Anthracite.Game;
 using UnityEngine.Events;
-using Assets.Scripts.GamePlay;
 using Assets.Scripts.Game;
+using Assets.Scripts.GamePlay;
 
 namespace Assets.Scripts.Player
 {
@@ -229,6 +229,8 @@ namespace Assets.Scripts.Player
             UpdateCharacterHeight(false);
 
             HandleCharacterMovement();
+
+           
         }
 
         void OnDie()
@@ -306,13 +308,12 @@ namespace Assets.Scripts.Player
             // движение на земле
             if (IsGrounded)
             {
-                m_Animator.SetBool("IsWalking", true);
-
                 var targetVelocity = worldspaceMoveInput * MaxSpeedOnGround * speedModifier;
                 if (IsCrouching)
                     targetVelocity *= MaxSpeedCrouchedRatio;
 
                 targetVelocity = GetDirectionReorientedOnSlope(targetVelocity.normalized, m_GroundNormal) * targetVelocity.magnitude;
+
 
                 // плавно интерполируем между текущей и целевой скоростью
                 CharacterVelocity = Vector3.Lerp(CharacterVelocity, targetVelocity, MovementSharpnessOnGround * Time.deltaTime);
@@ -329,9 +330,12 @@ namespace Assets.Scripts.Player
                         HasJumpedThisFrame = true;
                         IsGrounded = false;
                         m_GroundNormal = Vector3.up;
-                        m_Animator.SetBool("IsWalking", false);
                     }
                 }
+
+                // Вычисляем скорость как модуль горизонтальной скорости персонажа
+                var horizontalSpeed = new Vector3(CharacterVelocity.x, 0f, CharacterVelocity.z).magnitude;
+                m_Animator.SetFloat("Speed", horizontalSpeed);
 
                 // звуки шагов
                 var chosenFootstepSfxFrequency = isSprinting ? FootstepSfxFrequencyWhileSprinting : FootstepSfxFrequency;

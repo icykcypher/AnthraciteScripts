@@ -56,6 +56,33 @@ namespace Assets.Scripts.Game
 
         private const QueryTriggerInteraction k_TriggerInteraction = QueryTriggerInteraction.Collide;
 
+        void Start()
+        {
+            // Исключаем слой Ignore Raycast из маски слоев
+            HittableLayers &= ~(1 << LayerMask.NameToLayer("Ignore Raycast"));
+
+            m_ProjectileBase = GetComponent<ProjectileBase>();
+            if (m_ProjectileBase == null)
+            {
+                Debug.LogError("ProjectileBase is missing!", this);
+                return;
+            }
+
+            m_ProjectileBase.OnShoot += OnShoot;
+            Destroy(gameObject, MaxLifeTime); // Self destruction after max lifetime
+
+            // Get the Rigidbody component
+            m_Rigidbody = GetComponent<Rigidbody>();
+            if (m_Rigidbody == null)
+            {
+                m_Rigidbody = gameObject.AddComponent<Rigidbody>();
+            }
+
+            // Set Rigidbody properties
+            m_Rigidbody.useGravity = false; // Gravity will be applied manually
+            m_Rigidbody.isKinematic = false;
+        }
+
         void OnEnable()
         {
             m_ProjectileBase = GetComponent<ProjectileBase>();

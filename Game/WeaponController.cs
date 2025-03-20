@@ -3,9 +3,18 @@ using System.Collections.Generic;
 using UnityEngine.Events;
 using UnityEngine;
 using Assets.Scripts.Game;
+using System.Collections;
 
 namespace Anthracite.Game
 {
+    [System.Serializable]
+    public class WeaponSlot
+    {
+        public string slotName;
+        public Transform slotTransform;
+        public GameObject currentModule;
+    }
+
     public enum WeaponShootType
     {
         Manual,
@@ -49,6 +58,18 @@ namespace Anthracite.Game
         [Tooltip("Tip of the weapon, where the projectiles are shot")]
         public Transform WeaponMuzzle;
 
+        public GameObject ReloadingObject;
+
+        [Header("Weapon Modification")]
+        public Transform weaponParentSocket;
+        public Vector3 modifiedPosition;
+        public Vector3 originalPosition;
+        public float modificationSpeed = 5f;
+        private bool isModified = false;
+
+        [Header("Weapon Slots")]
+        public List<WeaponSlot> weaponSlots; // Список слотов оружия
+
         [Header("Shoot Parameters")]
         [Tooltip("The type of weapon wil affect how it shoots")]
         public WeaponShootType ShootType;
@@ -81,7 +102,7 @@ namespace Anthracite.Game
         [Tooltip("Should the player manually reload")]
         public bool AutomaticReload = true;
         [Tooltip("Has physical clip on the weapon and ammo shells are ejected when firing")]
-        public bool HasPhysicalBullets = false;
+        public bool HasPhysicalBullets = true;
         [Tooltip("Number of bullets in a clip")]
         public int ClipSize = 30;
         [Tooltip("Bullet Shell Casing")]
@@ -99,7 +120,7 @@ namespace Anthracite.Game
         public float AmmoReloadDelay = 2f;
 
         [Tooltip("Maximum amount of ammo in the gun")]
-        public int MaxAmmo = 8;
+        public int MaxAmmo = 30;
 
         [Header("Charging parameters (charging weapons only)")]
         [Tooltip("Trigger a shot when maximum charge is reached")]
@@ -156,6 +177,7 @@ namespace Anthracite.Game
         public float CurrentCharge { get; private set; }
         public Vector3 MuzzleWorldVelocity { get; private set; }
 
+
         public float GetAmmoNeededToShoot() =>
             (ShootType != WeaponShootType.Charge ? 1f : Mathf.Max(1f, AmmoUsedOnStartCharge)) /
             (MaxAmmo * BulletsPerShot);
@@ -174,7 +196,7 @@ namespace Anthracite.Game
         void Awake()
         {
             m_CurrentAmmo = MaxAmmo;
-            m_CarriedPhysicalBullets = HasPhysicalBullets ? ClipSize : 0;
+            m_CarriedPhysicalBullets = int.MaxValue;
             m_LastMuzzlePosition = WeaponMuzzle.position;
 
             m_ShootAudioSource = GetComponent<AudioSource>();
@@ -221,13 +243,118 @@ namespace Anthracite.Game
 
         void PlaySFX(AudioClip sfx) => AudioUtility.CreateSFX(sfx, transform.position, AudioUtility.AudioGroups.WeaponShoot, 0.0f);
 
+        void HandleWeaponModification()
+        {
+            if (Input.GetKeyDown(KeyCode.T))
+            {
+                isModified = !isModified; // Переключаем состояние модификации
+                Debug.Log("Weapon modification state: " + isModified);
+            }
+
+            // Плавное перемещение оружия
+            if (isModified)
+            {
+                weaponParentSocket.localPosition = Vector3.Lerp(
+                    weaponParentSocket.localPosition,
+                    modifiedPosition,
+                    modificationSpeed * Time.deltaTime
+                );
+            }
+            else
+            {
+                weaponParentSocket.localPosition = Vector3.Lerp(
+                    weaponParentSocket.localPosition,
+                    originalPosition,
+                    modificationSpeed * Time.deltaTime
+                );
+            }
+        }
+
+        public void AttachModule(int slotIndex, GameObject modulePrefab)
+        {
+            if (slotIndex < 0 || slotIndex >= weaponSlots.Count)
+            {
+                Debug.LogError("Invalid slot index.");
+                return;
+            }
+
+            WeaponSlot slot = weaponSlots[slotIndex];
+
+            if (slot.currentModule != null)
+            {
+                Destroy(slot.currentModule);
+            }
+
+            if (modulePrefab != null)
+            {
+                slot.currentModule = Instantiate(modulePrefab, slot.slotTransform);
+                slot.currentModule.transform.localPosition = Vector3.zero;
+                slot.currentModule.transform.localRotation = Quaternion.identity;
+            }
+        }
 
         void Reload()
         {
-            if (m_CarriedPhysicalBullets > 0)
+            if (IsReloading)
             {
-                m_CurrentAmmo = Mathf.Min(m_CarriedPhysicalBullets, ClipSize);
+                Debug.Log("Already reloading.");
+                return;
             }
+
+            if (m_CarriedPhysicalBullets <= 0)
+            {
+                Debug.Log("No carried bullets to reload.");
+                return;
+            }
+
+            if (m_CurrentAmmo >= ClipSize)
+            {
+                Debug.Log("Clip is already full.");
+                return;
+            }
+
+            Debug.Log("Starting reload.");
+            IsReloading = true;
+            StartCoroutine(AnimateReload());
+        }
+
+        public float ReloadAnimationDuration = 1.5f;
+
+        IEnumerator AnimateReload()
+        {
+            float elapsedTime = 0f;
+            Vector3 originalPosition = ReloadingObject.transform.localPosition;
+            Vector3 loweredPosition = originalPosition + new Vector3(0, -0.2f, 0); // Опускаем магазин
+
+            Debug.Log("Lowering magazine.");
+            // Опускаем магазин
+            while (elapsedTime < ReloadAnimationDuration / 2)
+            {
+                ReloadingObject.transform.localPosition = Vector3.Lerp(originalPosition, loweredPosition, elapsedTime / (ReloadAnimationDuration / 2));
+                elapsedTime += Time.deltaTime;
+                yield return null;
+            }
+
+            Debug.Log("Magazine lowered, waiting for a moment.");
+            yield return new WaitForSeconds(0.5f); // Небольшая задержка
+
+            elapsedTime = 0f;
+
+            Debug.Log("Raising magazine.");
+            // Поднимаем обратно
+            while (elapsedTime < ReloadAnimationDuration / 2)
+            {
+                ReloadingObject.transform.localPosition = Vector3.Lerp(loweredPosition, originalPosition, elapsedTime / (ReloadAnimationDuration / 2));
+                elapsedTime += Time.deltaTime;
+                yield return null;
+            }
+
+            // Обновляем патроны
+            int bulletsToLoad = Mathf.Min(ClipSize - (int)m_CurrentAmmo, m_CarriedPhysicalBullets);
+            m_CurrentAmmo += bulletsToLoad;
+            m_CarriedPhysicalBullets -= bulletsToLoad;
+
+            Debug.Log($"Reload complete. Current ammo: {m_CurrentAmmo}, Carried bullets: {m_CarriedPhysicalBullets}");
 
             IsReloading = false;
         }
@@ -252,6 +379,15 @@ namespace Anthracite.Game
                 MuzzleWorldVelocity = (WeaponMuzzle.position - m_LastMuzzlePosition) / Time.deltaTime;
                 m_LastMuzzlePosition = WeaponMuzzle.position;
             }
+
+            // Обработка перезарядки по кнопке R
+            if (Input.GetKeyDown(KeyCode.R) && !IsReloading) // Используем Input.GetKeyDown для проверки
+            {
+                Debug.Log("R key pressed, attempting to reload.");
+                Reload();
+            }
+
+            HandleWeaponModification();
         }
 
         void UpdateAmmo()
@@ -278,6 +414,11 @@ namespace Anthracite.Game
             else
             {
                 CurrentAmmoRatio = m_CurrentAmmo / MaxAmmo;
+            }
+
+            if (AutomaticReload && m_CurrentAmmo <= 0 && !IsReloading)
+            {
+                Reload();
             }
         }
 
